@@ -1,0 +1,146 @@
+#  GESTALT FIRMWARE MAKEFILE
+#  SIC PROJECT 086 GESTALT
+#  (C) 2013 ILAN E. MOYER + MIT CADLAB
+#
+#  --REVISION HISTORY---------------------------------
+#
+#  --------------------------------------------------------------------------------------------------------
+#  | DATE    | MODIFICATIONS                            | NAME              | FILENAME                    |
+#  |---------|------------------------------------------|-------------------|-----------------------------|
+#  |03/01/13 | CREATED                                  | ILAN E. MOYER     | Makefile		              |
+#  --------------------------------------------------------------------------------------------------------
+#
+#  --ABOUT GESTALT-------------------------------------
+#	Gestalt is a framework for automating physical hardware. The basic concept is that each unit of hardware,
+#	called a "node", has a matching python module called a "virtual node." Gestalt provides a means of connecting
+#	the physical node with the virtual node along with tools for creating both. This library is designed to assist
+# 	in programming nodes in C using the Arduino platform. 
+
+#	Gestalt also supports custom hardware with additional features beyond what is possible using stand-alone Arduino
+#	boards. These features include networking and synchronization across multiple nodes to create complex fabrication
+#	machines.
+#
+#	More information on Gestalt is avaliable at www.pygestalt.org
+
+# --ABOUT THIS FILE-------------------------------------
+#	This makefile is intended to be used to compile firmware for gestalt nodes without using the arduino environment.
+
+# --CREDITS---------------------------------------------
+# 	Makefiles by E. Lins, Kerry Wong, and the Arduino018 makefile by mellis, eighthave, and oli.keller were referenced
+# 	in the creation of this makefile.
+
+
+
+# --BEGIN MAKEFILE--------------------------------------
+
+# TARGET should be the name of the source file to be compiled.
+# The makefile should be located in and run from the same directory as the target file.
+TARGET = 086-005a_boot.cpp
+
+# MCU is the target microcontroller. Typical options might be atmega328p or atmega324pa.
+MCU = atmega328p
+
+# F_CPU is the clock speed of the target microcontroller. This is used by utilities like the delay library to generate
+# delays based on the actual clock speed. Most gestalt nodes use a clock of 18.432MHz because it induces the least
+# transmission errors when using the UART (upon which FABNET depends).
+F_CPU = 18432000
+
+# GESTALT_DEFS are general definition flags which affect how the library behaves.
+# -DnotArduino : invoke this flag if not compiling using arduino (i.e. if using this makefile)
+GESTALT_DEFS = -DnotArduino
+
+# LDSECTION is the byte address of the first memory location where the program should be loaded.
+# If the program is going in application space, this is typically 0x0000.
+# For a bootloader running on the atmega328 or atmega324, this is 0x7000.
+# APPLICATION SPACE
+# LDSECTION = --section-start=.text=0x0000
+# BOOTLOADER SPACE
+LDSECTION = --section-start=.text=0x7000
+
+# GESTALT_DIR is the directory where the gestalt library files are located.
+# These files are gestalt.cpp and gestalt.h.
+# You can symlink these files to a more convenient directory using this syntax:
+#  ln -s path/to/gestalt /path/to/symlink
+GESTALT_DIR = /Users/imoyer/gsArduino
+
+# Modules
+# This makefile is provided with only gestalt modules. However, if you are using additional external modules, you should
+# include them here.
+C_MODULES =
+
+CXX_MODULES = \
+$(GESTALT_DIR)/gestalt.cpp \
+
+MODULES = $(C_MODULES) ($CXX_MODULES)
+SRC = $(C_MODULES)
+CXXSRC = $(CXX_MODULES) $(TARGET)
+
+
+# COMPILER OPTIONS
+FORMAT = ihex
+# According to Arduino018 makefile, this is needed for "make depend"
+MAKEFILE = Makefile
+# OPTIMIZATION LEVEL. Note that -O flag is prepended later
+OPT = s
+DEBUG = 
+
+#CSTANDARD = -std=gnu99
+CSTANDARD = 
+
+# INNER WORKINGS
+CDEFS = -DF_CPU=$(F_CPU)L $GESTALT_DEFS
+CXXDEFS = -DF_CPU=$(F_CPU)L $GESTALT_DEFS
+
+CINCS = -I$(GESTALT_DIR)
+CXXINCS = -I$(GESTALT_DIR)
+
+CDEBUG = -g$(DEBUG)
+#CWARN = -Wall	#show all warnings
+CWARN = -w 	#suppress all warnings
+
+CTUNING = -ffunction-sections -fdata-sections
+CXXTUNING = -fno-exceptions -ffunction-sections -fdata-sections
+
+#FLAGS
+CFLAGS = $(CDEBUG) -O$(OPT) $(CWARN) $(CTUNING) $(CFLAGS) $(CINCS) $(CSTANDARD) -mmcu=$(MCU)
+CXXFLAGS = $(CDEBUG) -O$(OPT) $(CWARN) $(CXXTUNING) $(CXXDEFS) $(CXXINCS) -mmcu=$(MCU)
+ASFLAGS = -x assembler-with-cpp $(ASFLAGS) -mmcu=$(MCU)
+LDFLAGS = -O$(OPT) -lm -Wl,--gc-sections $(LDSECTION)
+
+#COMPILER COMPONENTS
+CC = avr-gcc
+CXX = avr-g++
+LD = avr-gcc
+OBJCOPY = avr-objcopy
+OBJDUMP = avr-objdump
+AR = avr-ar
+SIZE = avr-size
+NM = avr-nm
+REMOVE = rm -f
+MV = mv -f
+
+#DEFINE OBJECT FILES
+OBJ = $(SRC:.c=.o) $(CXXSRC:.cpp=.o) $(ASRC:.S=.o)
+OBJ_MODULES = $(C_MODULES:.c=.o) $(CXX_MODULES:.cpp=.o)
+
+#DEFINE LIST FILES
+LST = $(ASRC:.S=.lst) $(CXXSRC:.cpp=.lst) $(SRC:.c=.lst)
+
+
+
+all: 
+
+
+#COMPILE C++ Files into Object Files
+.cpp.o:
+	$(CXX) -c $(CXXFLAGS) $< -o $@
+
+#COMPILE C Files into Object Files
+.c.o:
+	$(CC) -c $(CFLAGS) $< -o $@
+
+.hex:
+	$(OBJCOPY) -O $(FORMAT) -R .eeprom $< $@
+
+.elf:
+	$(CC) -

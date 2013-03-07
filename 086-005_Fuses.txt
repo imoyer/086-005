@@ -1,0 +1,43 @@
+Fuse settings for Gestalt Single Stepper with Atmega328:
+
+Extended Fuse:
+7		N/A							1
+6		N/A							1
+5		N/A							1
+4		N/A							1
+3		N/A							1
+2		BODLEVEL2					1			//described on page 331, set at 2.7V
+1		BODLEVEL1					0
+0		BODLEVEL0					1
+									--
+									0xFD
+									
+High Fuse:
+7		RSTDISBL					1	//External Reset Enabled
+6		DWEN						1	//debugWire Disabled
+5		SPIEN						0	//SPI Programming Enabled (!!WILL BRICK IF SET TO 1!!)
+4		WDTON						1	//watchdog timer off
+3		EESAVE						1	//EEPROM not preserved during chip erase
+2		BOOTSZ1						0	//described on page 288, maximum size with reset at 0x3800 (word address)
+1		BOOTSZ0						0
+0		BOOTRST						0	//reset vector at bootloader section
+									--
+									0xD8
+									
+Low Fuse:
+7		CKDIV8						1	//1:1
+6		CKOUT						1 //clock not outputting
+5		SUT1						1	//max startup time
+4		SUT0						0
+3		CKSEL3						1	//according to page 32, highest frequency oscillator
+2		CKSEL2						1
+1		CKSEL1						1
+0		CKSEL0						1	//crystal oscillator, slowly rising power page 33
+									--
+									0xEF
+									
+
+--avrdude statements:--
+avrdude -c usbtiny -p m328p -U efuse:w:0x5:m -F	#note that only first 3 bits can be set
+avrdude -c usbtiny -p m328p -U hfuse:w:0xD8:m -F
+avrdude -c usbtiny -p m328p -U lfuse:w:0xEF:m -F

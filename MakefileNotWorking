@@ -1,0 +1,21 @@
+PROGRAM = 086-005a_boot.cpp
+FREQ = 18432000L
+MCU = atmega328p
+GESTALT_DIR = /Users/imoyer/gsArduino
+GESTALT_FILE = $(GESTALT_DIR)/gestalt.cpp
+LDSECTION  = --section-start=.text=0x7000
+
+CFLAGS = -g -Wall -Os -mmcu=$(MCU) -DF_CPU=$(FREQ) -I$(GESTALT_DIR)
+LDFLAGS = -Wl,$(LDSECTION)
+
+
+all: $(PROGRAM).hex
+
+086-005a.o: $(PROGRAM)
+	avr-g++ $(CFLAGS) -c -Wall $(PROGRAM) $(GESTALT_FILE)
+
+$(PROGRAM).elf: 086-005a_boot.o
+	avr-g++ $(CFLAGS) $(LDFLAGS) gestalt.o -o $@ $^
+
+$(PROGRAM).hex: $(PROGRAM).elf
+	avr-objcopy -j .text -j .data -O ihex $< $@
