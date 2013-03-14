@@ -135,7 +135,6 @@ class virtualNode(nodes.baseNetworkedGestaltNode):
 				#	steps: driver steps
 
 				self.updatePacketSet({'direction':direction, 'steps': int(steps)})
-				
 				self.transmit('unicast')
 				if self.waitForResponse(0.2): return True
 				else: return False
@@ -160,7 +159,7 @@ class virtualNode(nodes.baseNetworkedGestaltNode):
 				print int(uAcceleration)
 				self.updatePacketSet({'majorSteps': int(majorSteps), 'minVelocity': int(uMinVelocity / 1024.0),
 									  'maxVelocity': int(uMaxVelocity / 1024.0), 'acceleration': int(uAcceleration)})
-				self.transmit('unicast')
+				self.transmit('multicast')
 				return
 
 	class getReferenceVoltageRequest(functions.gFunction):

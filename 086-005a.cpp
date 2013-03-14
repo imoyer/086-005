@@ -48,6 +48,7 @@ const uint8_t readMotorRefPort    = 20;
 //STEPPER VARIABLES
 volatile uint16_t axisSteps = 0;  //axis steps to move
 volatile uint16_t axisStepsBuffer = 0;  //buffers axis steps because config can occur while stepping
+volatile int32_t stepError = 0;  //used for bresenham algorithm
 
 volatile uint16_t stepsToMove = 0;  //virtual major axis steps
 volatile uint16_t stepsMiddle = 0;  //keeps track of halfway 
@@ -110,6 +111,11 @@ void userSetup(){
   sei();
 }
 
+
+//USER LOOP
+void userLoop(){
+};
+
 //--STEP GENERATOR--
 //--INTERRUPT ROUTINES----
 ISR(TIMER1_COMPA_vect){
@@ -125,8 +131,12 @@ ISR(TIMER1_COMPA_vect){
     
     uPosition += uVelocity;
     if(uPosition>uSteps){
-      //take a step
-      motorPORT |= _BV(motorStep);  //rather than use a delay, step line gets turned off after a few more commands.
+      //take a step in major axis. test if step in minor axis.
+      stepError += int32_t(axisSteps);
+      if(stepError>int32_t(stepsMiddle)){
+        motorPORT |= _BV(motorStep);  //rather than use a delay, step line gets turned off after a few more commands.
+        stepError -= int32_t(stepsMiddle<<1);
+      }
       stepsToMove --;  //decrement x steps counter
       if(accelFlag == 1){
         accelSteps ++;
@@ -216,12 +226,20 @@ void svcStepSync(){
   accelFlag = 1;  //move is an acceleration move
   deccelFlag = 0;
   accelSteps = 0; //clear accel steps
+
+  stepError = 0;  //initialize bresenham generator
+  axisSteps = axisStepsBuffer;  //load steps to take
+  if(directionBuffer>0){  //set direction
+    setForward();
+  }else{
+    setReverse();
+  }
   
   //set stepsToMove, starting with larger byte (so that move doesn't end prematurely, although this won't take long)
   cli();
   stepsToMove = uint16_t(rxBuffer[payloadLocation + majorSteps1])<<8;
   stepsToMove += uint16_t(rxBuffer[payloadLocation + majorSteps0]);
-  stepsMiddle = stepsToMove>>1;  //set number of steps before decelleration should commence.
+  stepsMiddle = stepsToMove>>1;  //set number of steps before decelleration should commence. Also used for bresenham algorithm
   sei();
 
   //at this point, since steps have been loaded into stepsToMove, motion should commence within the ISR
