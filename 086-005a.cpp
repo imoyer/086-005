@@ -3,9 +3,6 @@
 #include <avr/delay.h>
 #include <avr/interrupt.h>
 
-//CONFIGURE URL
-char myurl[] = "http://www.fabunit.com/vn/086-005a.py";
-
 //STEPPER CONTROL PORT/PIN ASSIGNEMNTS
 #define motorPORT   PORTC
 #define motorDDR    DDRC
@@ -20,52 +17,85 @@ char myurl[] = "http://www.fabunit.com/vn/086-005a.py";
 
 
 //DEFINE NETWORK PORTS
-const uint8_t enableDriverPort    = 10;
-const uint8_t disableDriverPort   = 11;
-const uint8_t stepConfigPort      = 12;
-const uint8_t stepSyncPort        = 13;
-const uint8_t getStatusPort       = 15;
-const uint8_t readMotorRefPort    = 20;
+const uint8_t getVrefPort         = 20; //reports back the current motor reference voltage
+const uint8_t enableDriverPort    = 21; //enables the drivers
+const uint8_t disableDriverPort   = 22; //disables the drivers
+const uint8_t movePort            = 23; //move
+const uint8_t setVelocityPort     = 24; //sets current velocity
+const uint8_t spinStatusPort      = 26; //get spin status
+
+const uint8_t syncPort            = 30; //triggers a sync. This is a soft proxy for the sync control line.
+
+//Move Packet Definition
+#define moveMajorSteps  0
+#define moveDirections  1
+#define moveSteps       2
+#define moveAccel       3
+#define moveAccelSteps  4
+#define moveDeccelSteps 5
+#define moveSync        6
+
+//--Move Status Definition
+#define statusCode            0
+#define statusCurrentKey      1
+#define statusStepsRemaining  2
+#define statusReadPosition    3
+#define statusWritePosition   4
+
+#define velocity0       0
+#define velocity1       1
 
 
-//--CONFIG PACKET DEFINITION--
-#define direction       0
-#define axisStep0       1
-#define axisStep1       2
+//CONFIGURE URL
+char myurl[] = "http://www.fabunit.com/vn/086-005a.py";
 
-//--SYNC PACKET DEFINITION--
-#define majorSteps0     0
-#define majorSteps1     1
-#define minVelocity0    2
-#define minVelocity1    3
-#define maxVelocity0    4
-#define maxVelocity1    5
-#define moveAccel       6
+//STEP CONTROL VARIABLE AND MEMORY
+
+struct moveSegment{ //8 bytes total
+  volatile uint8_t segmentKey; //keeps track of segment number for status reports, pausing, etc.
+  volatile uint8_t majorSteps;  //virtual major steps to take
+  volatile uint8_t directions; //0b0000000a
+  volatile uint8_t steps; //number of steps to take
+  volatile uint8_t accel; //accel/decel rate for this segment
+  volatile uint8_t accelSteps;  //number of steps over which to accelerate
+  volatile uint8_t decelSteps; //number of steps over which to decelerate
+  volatile uint8_t waitForSync;  //if>0 then this move is waiting for a synchronization packet.
+};
+
+const uint8_t bufferLength = 64;  //512 bytes, on an atmega32x total memory is 2K.
+struct moveSegment moveBuffer[bufferLength];  //stores all buffered moves
+
+//CIRCULAR BUFFER INDEXES
+//When a new packet comes in, the write buffer position gets incremented and then that location is written to.
+//The main process (or maybe the step generator process) detects that the write buffer is ahead of
+//the read buffer, and increments the read buffer position and then reads that location into the step generator.
+volatile uint8_t readPosition = 0; //gets incremented and then read, so reflects location that was last read
+volatile uint8_t writePosition = 0; //gets incremented and then written, so reflects location that was last written to.
+volatile uint8_t segmentKeyCounter = 255; //used to pull new segment keys. The counter is incremented, and then a key is pulled.
+volatile uint8_t syncSearchPosition = 0; //the last buffer location where a search for a sync packet has been conducted.
 
 
+//DIRECTION MASKS
+const uint8_t aDirectionMask = 1; //only one axis.
 
+//BRESENHAM VARIABLES
+//Default units for packets are 1/4 steps, but system is operating at 1/16 steps.
+volatile uint16_t majorSteps;
+volatile uint16_t majorError; //majorError = majorSteps/2
+volatile uint16_t majorStepsRemaining;
+volatile int16_t aSteps;
+volatile int16_t aError;
 
-//STEPPER VARIABLES
-volatile uint16_t axisSteps = 0;  //axis steps to move
-volatile uint16_t axisStepsBuffer = 0;  //buffers axis steps because config can occur while stepping
-volatile int32_t stepError = 0;  //used for bresenham algorithm
-
-volatile uint16_t stepsToMove = 0;  //virtual major axis steps
-volatile uint16_t stepsMiddle = 0;  //keeps track of halfway 
-volatile uint16_t accelSteps = 0;  //stores how may steps are needed to finish accel move
-
-volatile uint8_t accelFlag = 0;  //when !=0, currently accelerating
-volatile uint8_t deccelFlag = 0;  //when !=0, currently deccelerating
-
-volatile uint8_t directionBuffer = 0; //used to buffer direction
-
-//1 step = 1048576 uSteps (2^20)
-volatile uint8_t uAcceleration = 0;  // uSteps/timeunit^2
-volatile uint32_t uVelocity = 0;  // uSteps/timeunit
-volatile uint32_t uVelocityMax = 0;
+//STEP GENERATOR VARIABLES
+volatile uint8_t microstepping = 2; //microstep resolution is 4*2^microstepping (base is 1/4 step, this variable is the bit shift)
+volatile uint16_t accelSteps = 0; //current segment accel steps
+volatile uint16_t decelSteps = 0; //current segment Decel steps
+volatile uint8_t uAccel = 0; //current segment acceleration
+volatile uint32_t uVelocity = 0;
 volatile uint32_t uPosition = 0;  //uSteps
 const uint32_t uSteps = 1048576;  //uSteps per step (2^20)
-
+volatile uint8_t waitingForSync = 0;  //this will get set to 1 when the move interrupt is waiting on a sync.
+volatile uint8_t antiLockout = 0; //if 1, indicates that velocity should be returned to zero at end of move.
 
 
 //USER SETUP
@@ -100,8 +130,8 @@ void userSetup(){
   ADCSRA = (1<<ADEN)|(0<<ADSC)|(0<<ADATE)|(0<<ADIF)|(0<<ADIE)|(1<<ADPS2)|(1<<ADPS1)|(1<<ADPS0);  //Enable ADC, clock source is CLK/128
 
   motorDDR |= (1<<motorStep)|(1<<motorDir)|(1<<motorReset)|(1<<motorMS1)|(1<<motorMS0)|(1<<motorEnable);  //set all motor pins to outputs
-  motorPORT |= (1<<motorReset)|(1<<motorEnable); //start with motor disabled, not in reset
-  motorPORT &= ~(1<<motorDir)|(1<<motorStep)|(1<<motorMS0)|(1<<motorMS1); //dir in reverse, step low, full stepping (note ~)
+  motorPORT |= (1<<motorReset)|(1<<motorEnable)|(1<<motorMS0)|(1<<motorMS1); //start with motor disabled, not in reset, 1/16 stepping
+  motorPORT &= ~(1<<motorDir)|(1<<motorStep); //dir in reverse, step low, (note ~)
 
   //CONFIGURE TIMER 1 FOR STEP GENERATION
   TCCR1A = (0<<COM1A1)|(0<<COM1A0)|(0<<COM1B1)|(0<<COM1B0)|(0<<WGM11)|(0<<WGM10);  //CTC on OCR1A
@@ -116,48 +146,9 @@ void userSetup(){
 void userLoop(){
 };
 
-//--STEP GENERATOR--
-//--INTERRUPT ROUTINES----
-ISR(TIMER1_COMPA_vect){
-  //check if steps to move
-  if(stepsToMove > 0){
-    if(accelFlag == 1){
-      uVelocity += uAcceleration;  //accelerate by uAcceleration
-    }else if(deccelFlag == 1){
-      uVelocity -= uAcceleration; //deccelerates by uAcceleration
-    }else if(stepsToMove <= accelSteps){
-      deccelFlag = 1;  //begin decceleration
-    }
-    
-    uPosition += uVelocity;
-    if(uPosition>uSteps){
-      //take a step in major axis. test if step in minor axis.
-      stepError += int32_t(axisSteps);
-      if(stepError>int32_t(stepsMiddle)){
-        motorPORT |= _BV(motorStep);  //rather than use a delay, step line gets turned off after a few more commands.
-        stepError -= int32_t(stepsMiddle<<1);
-      }
-      stepsToMove --;  //decrement x steps counter
-      if(accelFlag == 1){
-        accelSteps ++;
-        if(stepsToMove == stepsMiddle){
-          //start decel immediately, because still accelerating past mid-way point
-          accelFlag = 0;
-          deccelFlag = 1;
-        }
-      }else{
-        _delay_us(1);
-      }
-      motorPORT &= ~(_BV(motorStep));  // turn off step line
-      uPosition -= uSteps;  //keeps uPosition bounded to max value of 1048576
-    }
-    
-    //stop accelerating if max velocity is reached
-    if(uVelocity >= uVelocityMax){
-      accelFlag = 0;
-    }     
-  }
-}
+
+
+
 
 //--UTILITY FUNCTIONS----
 void enableDriver(){
@@ -176,6 +167,102 @@ void setReverse(){
   motorPORT &= ~(_BV(motorDir));
 }
 
+//--STEP GENERATOR--
+//--INTERRUPT ROUTINES----
+ISR(TIMER1_COMPA_vect){
+   //check for steps to move
+  if(majorStepsRemaining>0){
+
+    //ACCEL/DECCEL
+    if(accelSteps > (majorSteps-majorStepsRemaining)){  //accelerating, changed from >= to >, should examine implications more
+      uVelocity += uAccel;  //accelerate
+    }else if(decelSteps >= majorStepsRemaining){  //deccelerating
+      if (uVelocity > uAccel){ //make sure not to decelerate below zero
+        uVelocity -= uAccel;  //deccelerate
+      }else{  //velocity goes to zero
+        //uVelocity = 0;
+        antiLockout = 1;  //indicate that velocity should be returned to zero at end of move.
+        *IO_ledPORT |= IO_ledPin;
+      }
+    }
+
+    //MODIFY uPOSITION
+    uPosition += uVelocity;
+
+    //MAJOR AXIS STEP AND BRESENHAM ALGORITHM
+    if(uPosition>uSteps){
+      majorStepsRemaining --; //take a step in the virtual major axis
+      uPosition -= uSteps;
+
+      aError += aSteps;
+
+      if(aError > int16_t(majorError)){ //take step in A
+        motorPORT |= _BV(motorStep);  //rather than use a delay, step line gets turned off
+        aError -= int16_t(majorSteps);
+      }
+      _delay_us(1);
+      motorPORT &= ~(_BV(motorStep));  // turn off step line
+
+    }
+  }else{  //check for new packet to load
+
+      if(writePosition!=readPosition){
+      
+      if (antiLockout>0){ //anti-lockout feature prevents the step velocity from hitting zero.
+        uVelocity = 0;  //flag was set, so return velocity to zero AFTER move.
+        antiLockout = 0;
+        *IO_ledPORT &= ~IO_ledPin;
+      }
+
+        if(moveBuffer[readPosition + 1].waitForSync == 0){
+          waitingForSync = 0;  //indicate to external processes that not waiting for sync.
+          *IO_ledPORT &= ~IO_ledPin; //REMOVE turn off led
+          // ENABLE AXES
+          enableDriver();
+
+          if(syncSearchPosition == readPosition){ //prevent syncSearch from searching moves that have already been read.
+            syncSearchPosition++;
+          }
+          if(syncSearchPosition == bufferLength){
+            syncSearchPosition = 0;
+          }
+
+          readPosition ++;
+          if(readPosition == bufferLength){ //wrap-around
+            readPosition = 0;
+          }
+
+          //LOAD MAJOR STEP VARIABLES
+          majorSteps = uint16_t(moveBuffer[readPosition].majorSteps)<<microstepping;
+          majorError = majorSteps>>1;
+          majorStepsRemaining = majorSteps;
+
+          //SET MOTOR DIRECTIONS
+          if(moveBuffer[readPosition].directions & aDirectionMask){
+            setForward();
+          }else{
+            setReverse();
+          }
+
+          //SET AXIS STEPS
+          aSteps = int16_t(uint16_t(moveBuffer[readPosition].steps)<<microstepping);
+          aError = 0;
+
+          //SET ACCEL/DECCEL PARAMETERS
+          accelSteps = (uint16_t(moveBuffer[readPosition].accelSteps)<<microstepping);
+          decelSteps = (uint16_t(moveBuffer[readPosition].decelSteps)<<microstepping);
+          uAccel = (uint16_t(moveBuffer[readPosition].accel)<<microstepping);  //might need to shift here by microstepping. Remember that accel is per cycle, not step.
+        
+          //CLEAR uPOSITION
+          uPosition = 0; //this way acceleration will be more consistent in the face of rounding errors.
+        }else{
+          waitingForSync=1;
+          *IO_ledPORT |= IO_ledPin;
+        }
+      }
+  }
+}
+
 //SERVICE ROUTINES--
 void svcReadMotorRef(){
   ADCSRA |= (1<<ADSC);  //start conversion
@@ -186,7 +273,7 @@ void svcReadMotorRef(){
 
   txBuffer[payloadLocation] = ADCResult & 255;  //low byte
   txBuffer[payloadLocation + 1] = (ADCResult>>8); //high byte
-  transmitUnicastPacket(readMotorRefPort, 2);
+  transmitUnicastPacket(getVrefPort, 2);
 }
 
 void svcEnableDriver(){
@@ -200,80 +287,108 @@ void svcDisableDriver(){
   transmitUnicastPacket(disableDriverPort, 0);
 }
 
-void svcStepConfig(){
-  //load buffers for move to come
-  directionBuffer = rxBuffer[payloadLocation + direction];
-  axisStepsBuffer = uint16_t(rxBuffer[payloadLocation + axisStep1])<<8;
-  axisStepsBuffer += uint16_t(rxBuffer[payloadLocation + axisStep0]);
-  transmitUnicastPacket(stepConfigPort, 0);
+void svcSync(){
+  if(waitingForSync){
+    TCNT1 = 0;  //clear counter to synchronize clocks off of sync move.
+  } //this also gives 921 clock cycles to complete this routine.
+  uint8_t newSyncSearchPosition = syncSearchPosition;
+
+  do{
+    if (newSyncSearchPosition == writePosition){   //have already searched to the current write position
+      syncSearchPosition = newSyncSearchPosition; //record that have searched to here.
+      return;
+    }
+    newSyncSearchPosition++; //increment sync search position
+    if (newSyncSearchPosition == bufferLength){  //wrap-around
+      newSyncSearchPosition = 0;
+    }
+  }while(moveBuffer[newSyncSearchPosition].waitForSync != 1);
+  syncSearchPosition = newSyncSearchPosition; //commit changes to sync write position.
+  moveBuffer[newSyncSearchPosition].waitForSync = 0; //move is now ready to be run
 }
 
-void svcStepSync(){
-  enableDriver();
-  //load memory locations and then begin move
-  //set minimum and maximum velocities
-  //word value is multiplied by 2^10 or 1024
-  uVelocity = uint32_t(rxBuffer[payloadLocation + minVelocity0])<<10;
-  uVelocity += uint32_t(rxBuffer[payloadLocation + minVelocity1])<<18;
-  uVelocityMax = uint32_t(rxBuffer[payloadLocation + maxVelocity0])<<10;
-  uVelocityMax += uint32_t(rxBuffer[payloadLocation + maxVelocity1])<<18;
-  
-  //set acceleration
-  uAcceleration = rxBuffer[payloadLocation + moveAccel];
-  
-  //set initial state
-  uPosition = 0;  //clear position
-  accelFlag = 1;  //move is an acceleration move
-  deccelFlag = 0;
-  accelSteps = 0; //clear accel steps
-
-  stepError = 0;  //initialize bresenham generator
-  axisSteps = axisStepsBuffer;  //load steps to take
-  if(directionBuffer>0){  //set direction
-    setForward();
-  }else{
-    setReverse();
+void svcMove(){
+  //NEED TO ADD PROVISION FOR HANDLING SYNC WRITE POSITION
+  uint8_t newWritePosition = writePosition + 1; //check for buffer full condition before overwriting buffer position
+  if(newWritePosition==bufferLength){ //wrap-around
+    newWritePosition = 0;
+  } 
+  if(newWritePosition == readPosition){ //buffer full
+    txBuffer[payloadLocation + statusCode] = 0;
+    txBuffer[payloadLocation + statusCurrentKey] = moveBuffer[readPosition].segmentKey;
+    txBuffer[payloadLocation + statusStepsRemaining] = majorStepsRemaining>>microstepping;
+    txBuffer[payloadLocation + statusReadPosition] = readPosition;
+    txBuffer[payloadLocation + statusWritePosition] = writePosition;
+    transmitUnicastPacket(movePort, 5); //5 payload bytes in packet
+    return;
   }
-  
-  //set stepsToMove, starting with larger byte (so that move doesn't end prematurely, although this won't take long)
-  cli();
-  stepsToMove = uint16_t(rxBuffer[payloadLocation + majorSteps1])<<8;
-  stepsToMove += uint16_t(rxBuffer[payloadLocation + majorSteps0]);
-  stepsMiddle = stepsToMove>>1;  //set number of steps before decelleration should commence. Also used for bresenham algorithm
-  sei();
 
-  //at this point, since steps have been loaded into stepsToMove, motion should commence within the ISR
+  //fill segment parameters
+  segmentKeyCounter ++; //increment segment key counter before pulling a key
+  moveBuffer[newWritePosition].segmentKey = segmentKeyCounter;
+  moveBuffer[newWritePosition].majorSteps = rxBuffer[payloadLocation + moveMajorSteps];
+  moveBuffer[newWritePosition].directions = rxBuffer[payloadLocation + moveDirections];
+  moveBuffer[newWritePosition].steps = rxBuffer[payloadLocation + moveSteps];
+  moveBuffer[newWritePosition].accel = rxBuffer[payloadLocation + moveAccel];
+  moveBuffer[newWritePosition].accelSteps = rxBuffer[payloadLocation + moveAccelSteps];
+  moveBuffer[newWritePosition].decelSteps = rxBuffer[payloadLocation + moveDeccelSteps];
+  moveBuffer[newWritePosition].waitForSync = rxBuffer[payloadLocation + moveSync];
+
+  //transmit a response
+  txBuffer[payloadLocation + statusCode] = 1;
+  txBuffer[payloadLocation + statusCurrentKey] = moveBuffer[readPosition].segmentKey;
+  txBuffer[payloadLocation + statusStepsRemaining] = majorStepsRemaining>>microstepping;
+  txBuffer[payloadLocation + statusReadPosition] = readPosition;
+  txBuffer[payloadLocation + statusWritePosition] = newWritePosition;
+  transmitUnicastPacket(movePort, 5); //5 payload bytes in packet
+
+  //increment write buffer position (this will trigger a read if idle)
+  writePosition = newWritePosition;
+  return;
 }
 
-void svcGetStatus(){
-  txBuffer[payloadLocation] = stepsToMove & 0x000000FF;
-  txBuffer[payloadLocation + 1] = (stepsToMove & 0x0000FF00)>>8;
-  transmitUnicastPacket(getStatusPort, 2);  
+void svcSpinStatus(){
+  //transmit a response
+  txBuffer[payloadLocation + statusCode] = 1;
+  txBuffer[payloadLocation + statusCurrentKey] = moveBuffer[readPosition].segmentKey;
+  txBuffer[payloadLocation + statusStepsRemaining] = majorStepsRemaining>>microstepping;
+  txBuffer[payloadLocation + statusReadPosition] = readPosition;
+  txBuffer[payloadLocation + statusWritePosition] = writePosition;
+  transmitUnicastPacket(spinStatusPort, 5); //5 payload bytes in packet  
 }
 
+void svcSetVelocity(){
+  //incoming packet represents velocity in a 16 bit word. The max value of velocity is 2^20, so need to shift by 4.
+  //Also the incoming value is in steps/timebase, but need to convert into usteps/timebase
+  uVelocity = uint32_t(uint16_t(rxBuffer[payloadLocation+velocity0]) + uint16_t(rxBuffer[payloadLocation+velocity1])<<8)<<(4 + microstepping);
+  transmitUnicastPacket(setVelocityPort, 0);
+}
 //PACKET ROUTER
 void userPacketRouter(uint8_t destinationPort){
 
-    switch(destinationPort){
-      case readMotorRefPort:  //status request
-        svcReadMotorRef();
-        break;
+  switch(destinationPort){
+    case getVrefPort:  //status request
+      svcReadMotorRef();
+      break;
     case enableDriverPort: //enable drivers request
       svcEnableDriver();
       break;
     case disableDriverPort: //disable drivers
       svcDisableDriver();
       break;
-    case stepConfigPort:
-      svcStepConfig();
+    case movePort: //configure a move
+      svcMove();
       break;
-    case stepSyncPort:  //step synchronization packet
-      svcStepSync();
+    case setVelocityPort: //set velocity
+      svcSetVelocity();
       break;
-    case getStatusPort:
-      svcGetStatus();
+    case spinStatusPort:
+      svcSpinStatus();
       break;
-    }
+    case syncPort:
+      svcSync();
+      break;
+  };
 };
 
 

@@ -28,7 +28,11 @@ void userSetup(){
   IO_txEnablePin = 1<<2;
 }
 
+void userLoop(){
+};
+
 //PACKET ROUTER
 void userPacketRouter(uint8_t destinationPort){
 
 };
+

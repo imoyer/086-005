@@ -15,7 +15,7 @@ ADDRESS = 0x0000
 
 #LIST ALL CUSTOM DEFINES HERE
 #GESTALT_DEFS = -DstandardGestalt -Dbootloader -DsingleStepper -Dgestalt328
-GESTALT_DEFS = -DstandardGestalt -DsingleStepper -Dgestalt328
+GESTALT_DEFS = -DstandardGestalt -DnetworkedGestalt -DsingleStepper -Dgestalt328
 
 GESTALT_DIR = /Users/imoyer/gsArduino
 
