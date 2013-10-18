@@ -1,23 +1,25 @@
 # GESTALT FIRMWARE MAKEFILE
 # REVISED: 3/1/2013
+# REVISED: 10/18/2013: added -networkedGestalt lib, now compiles bootloader correctly
 # Ilan Moyer and Nadya Peek
 # www.pygestalt.org
 
 #Change filename as appropriate. Note: assumes .cpp
-PROJECT = 086-005a_boot
-#PROJECT = 086-005a
+
+GESTALT_DIR = ../gestalt/gsArduino
 
 MCU = atmega328p
 FREQ = 18432000	
 
-#ADDRESS = 0x7000
-ADDRESS = 0x0000
+#bootloader
+PROJECT = 086-005a_boot
+ADDRESS = 0x7000 
+GESTALT_DEFS = -DstandardGestalt -Dbootloader -DsingleStepper -Dgestalt328 -DnetworkedGestalt
 
-#LIST ALL CUSTOM DEFINES HERE
-#GESTALT_DEFS = -DstandardGestalt -Dbootloader -DsingleStepper -Dgestalt328
-GESTALT_DEFS = -DstandardGestalt -DnetworkedGestalt -DsingleStepper -Dgestalt328
-
-GESTALT_DIR = ../gestalt/gsArduino
+#application program, uncomment if you want to use this instead.
+#PROJECT = 086-005a
+#ADDRESS = 0x0000
+#GESTALT_DEFS = -DstandardGestalt -DnetworkedGestalt -DsingleStepper -Dgestalt328
 
 #----INNER WORKINGS BEGIN HERE----
 GESTALT_FILE = $(GESTALT_DIR)/gestalt.cpp
@@ -41,11 +43,22 @@ $(PROJECT).hex: $(PROJECT).elf
 clean:
 	rm -rf *.o *.elf
 
+####
+# load program code
+####
+# note: if you only have the 328 instead of the 328p, just compile for 328 
+# and load with the -p m328 flag. You'll need to add 328 to your avrdude.
+
 program-avrisp2-fuses:
-	avrdude -c avrisp2 -P usb -p m328p -U efuse:w:0x5:m -F	#note that only first 3 bits can be set
+	avrdude -c avrisp2 -P usb -p m328p -U efuse:w:0x5:m -F	
+	#note that only first 3 bits can be set
 	avrdude -c avrisp2 -P usb -p m328p -U hfuse:w:0xD8:m -F
 	avrdude -c avrisp2 -P usb -p m328p -U lfuse:w:0xEF:m -F
 
 program-avrisp2:
-	avrdude -c avrisp2 -P usb -p m328p -U flash:w:086-005a_boot.hex
-	
+#	uncomment to program bootloader
+	avrdude -e -c avrisp2 -P usb -p m328p -U flash:w:086-005a_boot.hex
+#	uncomment to program application
+#	avrdude -e -c avrisp2 -P usb -p m328p -U flash:w:086-005a.hex
+
+
