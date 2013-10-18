@@ -4,8 +4,8 @@
 # www.pygestalt.org
 
 #Change filename as appropriate. Note: assumes .cpp
-#PROJECT = 086-005a_boot
-PROJECT = 086-005a
+PROJECT = 086-005a_boot
+#PROJECT = 086-005a
 
 MCU = atmega328p
 FREQ = 18432000	
@@ -17,8 +17,7 @@ ADDRESS = 0x0000
 #GESTALT_DEFS = -DstandardGestalt -Dbootloader -DsingleStepper -Dgestalt328
 GESTALT_DEFS = -DstandardGestalt -DnetworkedGestalt -DsingleStepper -Dgestalt328
 
-GESTALT_DIR = /Users/imoyer/gsArduino
-
+GESTALT_DIR = ../gestalt/gsArduino
 
 #----INNER WORKINGS BEGIN HERE----
 GESTALT_FILE = $(GESTALT_DIR)/gestalt.cpp
@@ -41,3 +40,12 @@ $(PROJECT).hex: $(PROJECT).elf
 
 clean:
 	rm -rf *.o *.elf
+
+program-avrisp2-fuses:
+	avrdude -c avrisp2 -P usb -p m328p -U efuse:w:0x5:m -F	#note that only first 3 bits can be set
+	avrdude -c avrisp2 -P usb -p m328p -U hfuse:w:0xD8:m -F
+	avrdude -c avrisp2 -P usb -p m328p -U lfuse:w:0xEF:m -F
+
+program-avrisp2:
+	avrdude -c avrisp2 -P usb -p m328p -U flash:w:086-005a_boot.hex
+	
