@@ -17139,6 +17139,17 @@ Source: www.kingbright.com</description>
 </nets>
 </sheet>
 </sheets>
+<errors>
+<approved hash="104,1,215.9,-5.08,IC6,VCC,+5V,,,"/>
+<approved hash="104,1,177.8,73.66,IC1,VCC,+5V,,,"/>
+<approved hash="104,1,177.8,50.8,IC1,AGND,GND,,,"/>
+<approved hash="104,1,177.8,71.12,IC1,VCC,+5V,,,"/>
+<approved hash="112,1,93.98,-26.67,,,,,,"/>
+<approved hash="115,1,184.108,-44.3188,J1,,,,,"/>
+<approved hash="115,1,317.5,87.2405,S1,,,,,"/>
+<approved hash="115,1,318.77,73.9817,LED1,,,,,"/>
+<approved hash="115,1,227.288,-44.3188,J4,,,,,"/>
+</errors>
 </schematic>
 </drawing>
 </eagle>
