@@ -61,4 +61,17 @@ program-avrisp2:
 #	uncomment to program application
 	avrdude -e -c avrisp2 -P usb -p m328p -U flash:w:086-005a.hex
 
+program-usbtiny:
+#	uncomment to program bootloader
+#	avrdude -e -c usbtiny -P usb -p m328p -U flash:w:086-005a_boot.hex
+#	uncomment to program application
+	avrdude -e -c usbtiny -P usb -p m328p -U flash:w:086-005a.hex
+
+program-usbtiny-fuses:
+	avrdude -c usbtiny -P usb -p m328p -U efuse:w:0x5:m -F	
+	#note that only first 3 bits can be set
+	avrdude -c usbtiny -P usb -p m328p -U hfuse:w:0xD8:m -F
+	avrdude -c usbtiny -P usb -p m328p -U lfuse:w:0xEF:m -F
+
+
 
